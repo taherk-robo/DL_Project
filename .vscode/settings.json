@@ -1,0 +1,24 @@
+{
+    "python.formatting.provider": "black",
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true,
+    "jupyter.jupyterServerType": "local",
+    "python.linting.flake8Enabled": false,
+    "python.pythonPath": "venv/bin/python",
+    "python.linting.pylintPath": ".",
+    "python.analysis.extraPaths": [
+        "./optimizers",
+        "./problems",
+        "./models",
+        "./utils",
+        "./floorplans"
+    ],
+    "spellright.language": [
+        "en_US"
+    ],
+    "spellright.documentTypes": [
+        "markdown",
+        "latex",
+        "plaintext"
+    ]
+}

@@ -1,0 +1,318 @@
+import os
+import numpy as np
+import open3d as o3d
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import copy
+from datetime import datetime
+import networkx as nx
+import sys
+import math
+import matplotlib.pyplot as plt
+
+# Adjust the import paths as needed
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from optimizers.dinno import DiNNO
+from utils import graph_generation
+
+# Remove or comment out this line to use default dtype (torch.float32)
+# torch.set_default_dtype(torch.double)
+
+# Function to read KITTI Velodyne .bin file
+def read_kitti_bin(file_path):
+    """
+    Read a KITTI Velodyne .bin file and extract 3D point cloud (x, y, z).
+    :param file_path: Path to the .bin file.
+    :return: numpy array of shape (N, 3), where N is the number of points.
+    """
+    points = np.fromfile(file_path, dtype=np.float32).reshape(-1, 4)
+    return points[:, :3]  # Extract only x, y, z coordinates
+
+# Function to visualize a point cloud using Open3D
+def visualize_point_cloud(points, title="Point Cloud"):
+    """
+    Visualize a 3D point cloud using Open3D.
+    :param points: numpy array of shape (N, 3).
+    :param title: Title of the visualization window.
+    """
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    o3d.visualization.draw_geometries([pcd], window_name=title)
+
+# Custom Dataset for Point Cloud Data
+class PointCloudDataset(Dataset):
+    def __init__(self, point_clouds):
+        self.point_clouds = point_clouds
+
+    def __len__(self):
+        return len(self.point_clouds)
+
+    def __getitem__(self, idx):
+        data = torch.tensor(self.point_clouds[idx], dtype=torch.float32)
+        return data, data  # Return a tuple (input, target)
+
+# Neural Network (Autoencoder) for Point Cloud Data
+class PointCloudAutoencoder(nn.Module):
+    def __init__(self):
+        super(PointCloudAutoencoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.ReLU()
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 3)  # Reconstruct x, y, z
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+# Wrapper class for DDLProblem
+class DDLProblem:
+    def __init__(self, models, N, conf, train_subsets, val_set):
+        self.models = models
+        self.N = N
+        self.conf = conf
+        # Calculate the total number of parameters in the first model
+        self.n = torch.numel(torch.nn.utils.parameters_to_vector(self.models[0].parameters()))
+        # Initialize communication graph
+        self.graph = graph_generation.generate_from_conf(conf["graph"])[1]
+        # Initialize data loaders for each node
+        self.train_loaders = [
+            DataLoader(train_subsets[i], batch_size=conf["train_batch_size"], shuffle=True)
+            for i in range(N)
+        ]
+        self.val_loader = DataLoader(val_set, batch_size=conf["val_batch_size"], shuffle=False)
+        # Define the loss function
+        self.loss_fn = torch.nn.MSELoss()  # Or any other loss function based on conf["loss"]
+        # Assign device
+        self.device = self.conf["device"]
+
+    def local_batch_loss(self, i):
+        """
+        Compute the local batch loss for node i.
+        """
+        model = self.models[i].to(self.device)
+        model.train()
+        try:
+            data, target = next(iter(self.train_loaders[i]))
+        except StopIteration:
+            # Restart the loader if the iterator is exhausted
+            self.train_loaders[i] = iter(self.train_loaders[i])
+            data, target = next(iter(self.train_loaders[i]))
+        data, target = data.to(self.device), target.to(self.device)
+        output = model(data)
+        loss = self.loss_fn(output, target)
+        return loss
+
+    def evaluate_metrics(self, at_end=False):
+        """
+        Evaluate and return metrics such as validation loss.
+        """
+        metrics = {}
+        for i, model in enumerate(self.models):
+            model.eval()
+            total_loss = 0.0
+            with torch.no_grad():
+                for data, target in self.val_loader:
+                    data, target = data.to(self.device), target.to(self.device)
+                    output = model(data)
+                    loss = self.loss_fn(output, target)
+                    total_loss += loss.item()
+            average_loss = total_loss / len(self.val_loader)
+            metrics[f'validation_loss_node_{i}'] = average_loss
+            print(f"Validation Loss for node {i}: {average_loss}")
+        return metrics
+
+    def update_graph(self):
+        """
+        Update the communication graph if needed.
+        """
+        # Implement any dynamic graph updates if required
+        print("Updating communication graph...")
+        # Example: No dynamic updates; keep the graph static
+        pass
+
+def train_dinno(ddl_problem, loss, val_set, graph, device, conf):
+    # Define the DiNNO optimizer
+    optimizer = DiNNO(ddl_problem, device, conf)
+    
+    # Start training
+    optimizer.train()
+    
+    return optimizer.metrics
+
+def reconstruct_map(ddl_problem, device):
+    """
+    Reconstruct the entire map by aggregating local reconstructions from all nodes.
+    """
+    reconstructed_points = []
+    for i in range(ddl_problem.N):
+        model = ddl_problem.models[i].to(device)
+        model.eval()
+        with torch.no_grad():
+            for data, _ in ddl_problem.train_loaders[i]:
+                data = data.to(device)
+                reconstructed = model(data)
+                reconstructed_points.append(reconstructed.cpu().numpy())
+    reconstructed_points = np.concatenate(reconstructed_points, axis=0)
+    return reconstructed_points
+
+if __name__ == "__main__":
+    # Configuration
+    conf = {
+        "output_metadir": "./output/",
+        "name": "3d_map_DiNNO",
+        "epochs": 6,  # This corresponds to 'outer_iterations' in DiNNO
+        "verbose": True,
+        "graph": {
+            "type": "cycle",
+            "num_nodes": 10,
+            "p": 0.3,
+            "gen_attempts": 100
+        },
+        "train_batch_size": 16,
+        "val_batch_size": 16,
+        "data_split_type": "random",
+        "data_dir": "/home/taherk/Downloads/2011_09_28_drive_0035_sync/2011_09_28/2011_09_28_drive_0035_sync/velodyne_points/data",
+        "model": {
+            "in_channels": 1,
+            "out_channels": 3,
+            "init_features": 3,
+            "kernel_size": 5,
+            "linear_width": 64
+        },
+        "loss": "MSE",
+        "use_cuda": torch.cuda.is_available(),
+        "individual_training": {
+            "train_solo": False,
+            "optimizer": "adam",
+            "lr": 0.005,
+            "verbose": True
+        },
+        # DiNNO Specific Hyperparameters
+        "rho_init": 1.0,               # Initial rho value
+        "rho_scaling": 1.1,            # Scaling factor for rho
+        "lr_decay_type": "constant",   # 'constant', 'linear', or 'log'
+        "primal_lr_start": 0.001,      # Starting learning rate for primal optimizer
+        "primal_lr_finish": 0.0001,    # Final learning rate (used if lr_decay_type is 'linear' or 'log')
+        "outer_iterations": 6,         # Number of outer iterations (set to 'epochs' value)
+        "primal_iterations": 10,       # Number of primal updates per outer iteration
+        "persistant_primal_opt": True,  # Use persistent primal optimizers
+        "primal_optimizer": "adam",     # Type of primal optimizer: 'adam', 'sgd', 'adamw'
+        "metrics_config": {             # Metrics configuration (if used)
+            "evaluate_frequency": 1     # Evaluate metrics every iteration
+        },
+        "device": "cuda" if torch.cuda.is_available() else "cpu"  # Adding 'device' key
+    }
+
+    # Create output directory
+    if not os.path.exists(conf["output_metadir"]):
+        os.makedirs(conf["output_metadir"], exist_ok=True)
+
+    # Load point cloud data
+    all_points = []
+    for file_name in sorted(os.listdir(conf["data_dir"])):
+        if file_name.endswith('.bin'):
+            file_path = os.path.join(conf["data_dir"], file_name)
+            points = read_kitti_bin(file_path)
+            all_points.append(points)
+
+    all_points = np.concatenate(all_points, axis=0)
+    visualize_point_cloud(all_points, title="Original Point Cloud")
+
+    # Create communication graph
+    try:
+        N, graph = graph_generation.generate_from_conf(conf["graph"])
+    except NameError as e:
+        print("Error:", str(e))
+        available_graph_types = ["fully_connected", "ring", "star", "erdos_renyi", "cycle"]  # Example available graph types
+        print("Available graph types:", available_graph_types)
+        raise ValueError("Unknown communication graph type. Please check the graph configuration.")
+    nx.write_gpickle(graph, os.path.join(conf["output_metadir"], "graph.gpickle"))
+
+    # Create full training dataset
+    full_train_set = PointCloudDataset(all_points)
+
+    # Split data into subsets for each node
+    if conf["data_split_type"] == "random":
+        num_samples_per = len(full_train_set) // N
+        point_splits = [num_samples_per for _ in range(N - 1)]
+        point_splits.append(len(full_train_set) - sum(point_splits))  # Ensure the split lengths sum to the total length
+        train_subsets = torch.utils.data.random_split(full_train_set, point_splits)
+    elif conf["data_split_type"] == "hetero":
+        # Assuming the last column is class label; adjust if different
+        classes = torch.unique(torch.tensor(all_points[:, -1]))
+        train_subsets = []
+        if N <= len(classes):
+            joint_labels = torch.tensor(all_points[:, -1])
+            node_classes = torch.split(classes, int(math.ceil(len(classes) / N)))
+            for i in range(N):
+                if i < len(node_classes):
+                    current_classes = node_classes[i]
+                else:
+                    current_classes = node_classes[-1]  # Assign remaining classes to the last node
+                locs = [lab == joint_labels for lab in current_classes]
+                combined_locs = torch.stack(locs).sum(0) > 0
+                idx_keep = torch.nonzero(combined_locs).reshape(-1)
+                train_subsets.append(torch.utils.data.Subset(full_train_set, idx_keep))
+        else:
+            raise NameError("Hetero data split N > number of classes not supported.")
+
+    # Create validation set
+    val_set = PointCloudDataset(all_points[:1000])  # Example validation set
+
+    # Create base models for each node
+    models = [PointCloudAutoencoder() for _ in range(N)]
+
+    # Verify Model Dtypes
+    for idx, model in enumerate(models):
+        for name, param in model.named_parameters():
+            print(f"Model {idx}, Parameter {name}, dtype: {param.dtype}")
+
+    # Create DDLProblem instance
+    ddl_problem = DDLProblem(models=models, N=N, conf=conf, train_subsets=train_subsets, val_set=val_set)
+
+    # Define base loss function
+    if conf["loss"] == "MSE":
+        loss = torch.nn.MSELoss()
+    else:
+        raise NameError("Unknown loss function.")
+
+    # Assign device
+    device = torch.device(conf["device"])
+    print(f"Device is set to {'GPU' if device.type == 'cuda' else 'CPU'}")
+
+    # Train using DiNNO
+    if conf["individual_training"]["train_solo"]:
+        print("Performing individual training...")
+        # Implement individual training logic here if needed
+    else:
+        try:
+            metrics = train_dinno(ddl_problem, loss, val_set, graph, device, conf)
+        except Exception as e:
+            print(f"An error occurred during training: {e}")
+            metrics = None
+
+        if metrics is not None:
+            # Save metrics and models
+            torch.save(metrics, os.path.join(conf["output_metadir"], "dinno_metrics.pt"))
+            for idx, model in enumerate(ddl_problem.models):
+                torch.save(model.state_dict(), os.path.join(conf["output_metadir"], f"dinno_trained_model_{idx}.pth"))
+            print("Training complete. Metrics and models saved.")
+
+            # Reconstruct the whole map
+            reconstructed_map = reconstruct_map(ddl_problem, device)
+            visualize_point_cloud(reconstructed_map, title="Reconstructed Point Cloud")
+
+            # Optionally, save the reconstructed map
+            np.save(os.path.join(conf["output_metadir"], "reconstructed_map.npy"), reconstructed_map)
+            print("Reconstructed map saved.")
