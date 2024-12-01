@@ -1,93 +1,34 @@
-# # import open3d as o3d
-# # import os
-
-# # def visualize_pcd(pcd_path):
-# #     """
-# #     Loads and visualizes a point cloud from a PCD file using Open3D.
-    
-# #     Args:
-# #         pcd_path (str): Path to the PCD file.
-# #     """
-# #     if not os.path.exists(pcd_path):
-# #         print(f"File not found: {pcd_path}")
-# #         return
-    
-# #     # Load the point cloud
-# #     global_map = o3d.io.read_point_cloud(pcd_path)
-    
-# #     if global_map.is_empty():
-# #         print("The point cloud is empty. Please check the file content.")
-# #         return
-    
-# #     # Optional: Downsample for better visualization performance
-# #     voxel_size = 0.05  # Adjust voxel size as needed
-# #     global_map_downsampled = global_map.voxel_down_sample(voxel_size=voxel_size)
-    
-# #     # Print point cloud information
-# #     print(global_map_downsampled)
-    
-# #     # Visualize
-# #     o3d.visualization.draw_geometries(
-# #         [global_map_downsampled],
-# #         window_name="Reconstructed Global Map",
-# #         width=800,
-# #         height=600,
-# #         left=50,
-# #         top=50,
-# #         point_show_normal=False
-# #     )
-
-# # if __name__ == "__main__":
-# #     # Path to your reconstructed global map PCD file
-# #     pcd_file = "./output/reconstructed_global_map.pcd"  # Update this path if different
-    
-# #     visualize_pcd(pcd_file)
-
-
 # import open3d as o3d
-# import numpy as np
 # import os
 
-# def visualize_reconstructed_map(pcd_path):
+# def visualize_pcd(pcd_path):
 #     """
-#     Loads and visualizes a reconstructed point cloud from a .npy file using Open3D.
-
+#     Loads and visualizes a point cloud from a PCD file using Open3D.
+    
 #     Args:
-#         pcd_path (str): Path to the reconstructed_map.npy file.
+#         pcd_path (str): Path to the PCD file.
 #     """
 #     if not os.path.exists(pcd_path):
 #         print(f"File not found: {pcd_path}")
 #         return
-
-#     # Load the reconstructed map from .npy
-#     reconstructed_points = np.load(pcd_path)
-#     print(f"Loaded reconstructed points shape: {reconstructed_points.shape}, dtype: {reconstructed_points.dtype}")
-
-#     # Ensure the data is float64
-#     if reconstructed_points.dtype != np.float64:
-#         print("Converting reconstructed points to float64...")
-#         reconstructed_points = reconstructed_points.astype(np.float64)
-
-#     # Ensure the shape is (N, 3)
-#     if reconstructed_points.ndim != 2 or reconstructed_points.shape[1] != 3:
-#         raise ValueError(f"Reconstructed points have invalid shape: {reconstructed_points.shape}. Expected shape (N, 3).")
-
-#     # Create an Open3D PointCloud object
-#     pcd = o3d.geometry.PointCloud()
-#     try:
-#         pcd.points = o3d.utility.Vector3dVector(reconstructed_points)
-#     except RuntimeError as e:
-#         print(f"Error assigning points to PointCloud: {e}")
+    
+#     # Load the point cloud
+#     global_map = o3d.io.read_point_cloud(pcd_path)
+    
+#     if global_map.is_empty():
+#         print("The point cloud is empty. Please check the file content.")
 #         return
-
+    
 #     # Optional: Downsample for better visualization performance
-#     voxel_size = 0.05  # Adjust as needed
-#     pcd_downsampled = pcd.voxel_down_sample(voxel_size=voxel_size)
-#     print(f"Downsampled point cloud has {len(pcd_downsampled.points)} points.")
-
-#     # Visualize the point cloud
+#     voxel_size = 0.05  # Adjust voxel size as needed
+#     global_map_downsampled = global_map.voxel_down_sample(voxel_size=voxel_size)
+    
+#     # Print point cloud information
+#     print(global_map_downsampled)
+    
+#     # Visualize
 #     o3d.visualization.draw_geometries(
-#         [pcd_downsampled],
+#         [global_map_downsampled],
 #         window_name="Reconstructed Global Map",
 #         width=800,
 #         height=600,
@@ -97,10 +38,69 @@
 #     )
 
 # if __name__ == "__main__":
-#     # Path to the reconstructed_map.npy file
-#     pcd_file = "./output/reconstructed_map.npy"  # Update this path if different
+#     # Path to your reconstructed global map PCD file
+#     pcd_file = "./output/reconstructed_global_map.pcd"  # Update this path if different
+    
+#     visualize_pcd(pcd_file)
 
-#     visualize_reconstructed_map(pcd_file)
+
+import open3d as o3d
+import numpy as np
+import os
+
+def visualize_reconstructed_map(pcd_path):
+    """
+    Loads and visualizes a reconstructed point cloud from a .npy file using Open3D.
+
+    Args:
+        pcd_path (str): Path to the reconstructed_map.npy file.
+    """
+    if not os.path.exists(pcd_path):
+        print(f"File not found: {pcd_path}")
+        return
+
+    # Load the reconstructed map from .npy
+    reconstructed_points = np.load(pcd_path)
+    print(f"Loaded reconstructed points shape: {reconstructed_points.shape}, dtype: {reconstructed_points.dtype}")
+
+    # Ensure the data is float64
+    if reconstructed_points.dtype != np.float64:
+        print("Converting reconstructed points to float64...")
+        reconstructed_points = reconstructed_points.astype(np.float64)
+
+    # Ensure the shape is (N, 3)
+    if reconstructed_points.ndim != 2 or reconstructed_points.shape[1] != 3:
+        raise ValueError(f"Reconstructed points have invalid shape: {reconstructed_points.shape}. Expected shape (N, 3).")
+
+    # Create an Open3D PointCloud object
+    pcd = o3d.geometry.PointCloud()
+    try:
+        pcd.points = o3d.utility.Vector3dVector(reconstructed_points)
+    except RuntimeError as e:
+        print(f"Error assigning points to PointCloud: {e}")
+        return
+
+    # Optional: Downsample for better visualization performance
+    voxel_size = 0.05  # Adjust as needed
+    pcd_downsampled = pcd.voxel_down_sample(voxel_size=voxel_size)
+    print(f"Downsampled point cloud has {len(pcd_downsampled.points)} points.")
+
+    # Visualize the point cloud
+    o3d.visualization.draw_geometries(
+        [pcd_downsampled],
+        window_name="Reconstructed Global Map",
+        width=800,
+        height=600,
+        left=50,
+        top=50,
+        point_show_normal=False
+    )
+
+if __name__ == "__main__":
+    # Path to the reconstructed_map.npy file
+    pcd_file = "./output/reconstructed_map.npy"  # Update this path if different
+
+    visualize_reconstructed_map(pcd_file)
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # Necessary for 3D plotting
@@ -195,6 +195,9 @@ def plot_reconstructed_map(pcd_path):
 
 if __name__ == "__main__":
     # Path to the reconstructed_map.npy file
-    pcd_file = "./output/reconstructed_map.npy"  # Update this path if different
-
+    # pcd_file = "E:/Documents/Masters_Courses/ESE 5460/final_project_env/DL_Project/experiments/output/reconstructed_map.npy"  # Update this path if different
+    # pcd_file = "E:/Documents/Masters_Courses/ESE 5460/final_project_env/DL_Project/output/reconstructed_map.npy" 
+    # pcd_file = "E:/Documents/Masters_Courses/ESE 5460/final_project_env/DL_Project/output/3d_map_DiNNO_20241129_125817/original_maps/combined_original_map.npy"
+    pcd_file = "E:/Documents/Masters_Courses/ESE 5460/final_project_env/DL_Project/output/3d_map_DiNNO_20241129_125817/reconstructed_maps/combined_global_map.npy"
     plot_reconstructed_map(pcd_file)
+    

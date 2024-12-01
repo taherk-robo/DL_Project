@@ -541,6 +541,51 @@ def align_point_clouds(source_pcd, target_pcd, threshold=0.02):
     source_pcd.transform(transformation)
     return source_pcd
 
+# def reconstruct_and_align_map(ddl_problem, device):
+#     """
+#     Reconstruct the entire map by aggregating and aligning local reconstructions from all nodes.
+
+#     Args:
+#         ddl_problem: Instance of DDLProblem containing models and data loaders.
+#         device: Torch device.
+
+#     Returns:
+#         global_map: Open3D PointCloud object representing the global map.
+#     """
+#     reconstructed_pcds = []
+#     for i in range(ddl_problem.N):
+#         model = ddl_problem.models[i].to(device)
+#         model.eval()
+#         all_reconstructions = []
+#         with torch.no_grad():
+#             for data, _ in ddl_problem.train_loaders[i]:
+#                 data = data.to(device)
+#                 data = data.permute(0, 2, 1)  # [batch_size, 3, num_points]
+#                 output = model(data)
+#                 if USE_PYTORCH3D:
+#                     # If using PyTorch3D, output is [batch_size, 3, num_points]
+#                     pass
+#                 else:
+#                     # If using CPU, ensure output is [batch_size, 3, num_points]
+#                     pass
+#                 output = output.permute(0, 2, 1)  # [batch_size, num_points, 3]
+#                 all_reconstructions.append(output.cpu().numpy())
+#         reconstructed_points = np.concatenate(all_reconstructions, axis=0)
+#         pcd = o3d.geometry.PointCloud()
+#         pcd.points = o3d.utility.Vector3dVector(reconstructed_points)
+#         pcd = pcd.voxel_down_sample(voxel_size=0.05)  # Optional: Downsample for efficiency
+#         reconstructed_pcds.append(pcd)
+
+#     # Initialize global map with the first node's reconstruction
+#     global_map = reconstructed_pcds[0]
+
+#     for pcd in reconstructed_pcds[1:]:
+#         global_map = align_point_clouds(pcd, global_map)
+#         global_map += pcd
+#         global_map = global_map.voxel_down_sample(voxel_size=0.05)  # Optional: Downsample after merging
+
+#     return global_map
+
 def reconstruct_and_align_map(ddl_problem, device):
     """
     Reconstruct the entire map by aggregating and aligning local reconstructions from all nodes.
@@ -562,15 +607,15 @@ def reconstruct_and_align_map(ddl_problem, device):
                 data = data.to(device)
                 data = data.permute(0, 2, 1)  # [batch_size, 3, num_points]
                 output = model(data)
-                if USE_PYTORCH3D:
-                    # If using PyTorch3D, output is [batch_size, 3, num_points]
-                    pass
-                else:
-                    # If using CPU, ensure output is [batch_size, 3, num_points]
-                    pass
                 output = output.permute(0, 2, 1)  # [batch_size, num_points, 3]
                 all_reconstructions.append(output.cpu().numpy())
+
+        # Concatenate all reconstructions
         reconstructed_points = np.concatenate(all_reconstructions, axis=0)
+
+        # Reshape to (n_points, 3) and convert to float64
+        reconstructed_points = reconstructed_points.reshape(-1, 3).astype(np.float64)
+
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(reconstructed_points)
         pcd = pcd.voxel_down_sample(voxel_size=0.05)  # Optional: Downsample for efficiency
@@ -586,6 +631,7 @@ def reconstruct_and_align_map(ddl_problem, device):
 
     return global_map
 
+
 # Main Training Function
 def train_dinno(ddl_problem, loss, val_set, graph, device, conf):
     # Define the DiNNO optimizer
@@ -596,24 +642,26 @@ def train_dinno(ddl_problem, loss, val_set, graph, device, conf):
 
     return optimizer.metrics
 
+
+
 # Main Execution Block
 if __name__ == "__main__":
     # Configuration
     conf = {
-        "output_metadir": "./output/",
+        "output_metadir": "output",
         "name": "3d_map_DiNNO",
         "epochs": 100,  # Corresponds to 'outer_iterations' in DiNNO
         "verbose": True,
         "graph": {
             "type": "cycle",  # Options: "fully_connected", "cycle", "ring", "star", "erdos_renyi"
-            "num_nodes": 10,
+            "num_nodes": 2,
             "p": 0.3,
             "gen_attempts": 100
         },
-        "train_batch_size": 8,          # Adjusted batch size
-        "val_batch_size": 8,            # Adjusted batch size
-        "data_split_type": "spatial",   # Changed from "random" to "spatial"
-        "data_dir": "/home/taherk/Downloads/2011_09_28_drive_0035_sync/2011_09_28/2011_09_28_drive_0035_sync/velodyne_points/data",  # Update this path
+        "train_batch_size": 8,          
+        "val_batch_size": 8,            
+        "data_split_type": "spatial",   
+        "data_dir": "/home/taherk/nn_distributed_training/2011_09_28_drive_0035_sync/velodyne_points/data",
         "model": {
             "in_channels": 3,  # Updated for PointNet
             "out_channels": 3,
